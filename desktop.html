@@ -1009,7 +1009,6 @@ input[type=file] { display: none; }
               background-color 0.3s ease, backdrop-filter 0.3s ease, border-color 0.3s ease;
 }
 
-/* Transición animada para ocultar/mostrar la letra */
 .fs-lyrics-center.lyrics-hidden {
   opacity: 0;
   transform: translateY(-12px) scale(0.96);
@@ -1017,7 +1016,6 @@ input[type=file] { display: none; }
   pointer-events: none;
 }
 
-/* Fondo transparente + Blur activo únicamente al cargar letra */
 .fs-lyrics-center.has-lyrics {
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(16px);
@@ -2252,11 +2250,6 @@ function playContext(targetIndex, contextIndices) {
   loadTrack(targetIndex);
 }
 
-function playPlaylistTrack(index) {
-  const allIndices = playlist.map((_, idx) => idx);
-  playContext(index, allIndices);
-}
-
 function addToQueue(index, e) {
   if (e) e.stopPropagation();
   if (index < 0 || index >= playlist.length) return;
@@ -2419,7 +2412,6 @@ async function processNewTracks(newTracks) {
             if (tags.artist) track.artist = tags.artist;
             if (tags.album) track.album = tags.album;
 
-            // Optimización clave: Blob ultra ligero en lugar de Base64 pesada
             if (tags.picture && !track.coverUrl) {
               try {
                 const { data, format } = tags.picture;
@@ -2441,7 +2433,6 @@ async function processNewTracks(newTracks) {
       });
     }));
 
-    // Liberar hilo principal para mantener interfaz responsiva
     await new Promise(r => setTimeout(r, 0));
   }
 
@@ -2494,7 +2485,7 @@ document.getElementById("folderInput").addEventListener("change", async (e) => {
 
   if (newTracks.length > 0) {
     await processNewTracks(newTracks);
-    if (currentTrackIndex === -1 && playlist.length > 0) playPlaylistTrack(0);
+    if (currentTrackIndex === -1 && playlist.length > 0) playContext(0, playlist.map((_, i) => i));
   }
 
   toggleModal('settingsModal', false);
@@ -2517,7 +2508,7 @@ document.getElementById("audioFiles").addEventListener("change", async (e) => {
 
   if (newTracks.length > 0) {
     await processNewTracks(newTracks);
-    if (currentTrackIndex === -1 && playlist.length > 0) playPlaylistTrack(0);
+    if (currentTrackIndex === -1 && playlist.length > 0) playContext(0, playlist.map((_, i) => i));
   }
 
   toggleModal('settingsModal', false);
@@ -2619,10 +2610,10 @@ function renderPlaylist() {
 
   if (filteredPlaylist.length === 0) {
     playlistDiv.innerHTML = `<div class="empty-state">No se encontraron canciones.</div>`;
-    renderAlbums();
-    renderArtists();
     return;
   }
+
+  const contextIndices = filteredPlaylist.map(t => playlist.indexOf(t));
 
   filteredPlaylist.forEach((track) => {
     const i = playlist.indexOf(track);
@@ -2634,7 +2625,7 @@ function renderPlaylist() {
     const isFav = favorites.has(track.baseName);
 
     card.innerHTML = `
-      <div class="track-card-left" onclick="playPlaylistTrack(${i})">
+      <div class="track-card-left" onclick="playContext(${i}, [${contextIndices}])">
         <div class="track-thumb">${thumbHtml}</div>
         <div class="track-text-container">
           <div class="track-card-title">${escapeHtml(track.title)}</div>
@@ -2649,9 +2640,6 @@ function renderPlaylist() {
 
     playlistDiv.appendChild(card);
   });
-
-  renderAlbums();
-  renderArtists();
 }
 
 function renderFavorites() {
@@ -2669,6 +2657,8 @@ function renderFavorites() {
     return;
   }
 
+  const favIndices = favTracks.map(t => playlist.indexOf(t));
+
   favTracks.forEach((track) => {
     const i = playlist.indexOf(track);
     let card = document.createElement("div");
@@ -2676,7 +2666,7 @@ function renderFavorites() {
     const thumbHtml = track.coverUrl ? `<img src="${track.coverUrl}" alt="Portada">` : `🎵`;
 
     card.innerHTML = `
-      <div class="track-card-left" onclick="playPlaylistTrack(${i})">
+      <div class="track-card-left" onclick="playContext(${i}, [${favIndices}])">
         <div class="track-thumb">${thumbHtml}</div>
         <div class="track-text-container">
           <div class="track-card-title">${escapeHtml(track.title)}</div>
@@ -2695,9 +2685,45 @@ function renderFavorites() {
 
 function renderAlbums() {
   const albumsContainer = document.getElementById("albumsContainer");
-  if (playlist.length === 0) {
-    document.getElementById("albumsCount").textContent = "0";
-    albumsContainer.innerHTML = `<div class="albums-grid"><div class="empty-state" style="grid-column: 1 / -1;">No hay álbumes.</div></div>`;
+  
+  if (selectedAlbum) {
+    const albumTracks = playlist.filter(t => (t.album || "Álbum Desconocido").toLowerCase().trim() === selectedAlbum);
+    const albumName = albumTracks[0]?.album || "Álbum Desconocido";
+    
+    const albumIndices = albumTracks.map(t => playlist.indexOf(t));
+
+    let html = `
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-shrink: 0;">
+        <button class="icon-btn" onclick="selectedAlbum=null; renderAlbums();">← Volver a Álbumes</button>
+        <div style="font-weight: bold; font-size: 14px; text-transform: uppercase;">${escapeHtml(albumName)}</div>
+      </div>
+      <div class="playlist-container">
+    `;
+
+    albumTracks.forEach(track => {
+      const idx = playlist.indexOf(track);
+      const isFav = favorites.has(track.baseName);
+      const thumbHtml = track.coverUrl ? `<img src="${track.coverUrl}" alt="Portada">` : `🎵`;
+
+      html += `
+        <div class="track-card ${idx === currentTrackIndex ? 'active-track' : ''}" data-index="${idx}">
+          <div class="track-card-left" onclick="playContext(${idx}, [${albumIndices}])">
+            <div class="track-thumb">${thumbHtml}</div>
+            <div class="track-text-container">
+              <div class="track-card-title">${escapeHtml(track.title)}</div>
+              <div class="track-card-meta">${escapeHtml(track.artist)}</div>
+            </div>
+          </div>
+          <div class="track-card-actions">
+            <button class="fav-btn ${isFav ? 'active' : ''}" onclick="toggleFavorite('${track.baseName}', event)">★</button>
+            <button class="icon-btn" style="padding: 4px 8px; font-size: 11px;" onclick="addToQueue(${idx}, event)">+</button>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+    albumsContainer.innerHTML = html;
     return;
   }
 
@@ -2714,12 +2740,17 @@ function renderAlbums() {
 
   document.getElementById("albumsCount").textContent = albumGroups.size;
 
+  if (albumGroups.size === 0) {
+    albumsContainer.innerHTML = `<div class="albums-grid"><div class="empty-state" style="grid-column: 1 / -1;">No hay álbumes.</div></div>`;
+    return;
+  }
+
   let gridHtml = `<div class="albums-grid">`;
   albumGroups.forEach((group) => {
     if (searchQuery && !group.name.toLowerCase().includes(searchQuery)) return;
     const coverHtml = group.coverUrl ? `<img src="${group.coverUrl}" alt="Carátula">` : `🎵`;
     gridHtml += `
-      <div class="album-card" onclick="selectedAlbum='${group.key}'; renderAlbums();">
+      <div class="album-card" onclick="selectedAlbum='${escapeHtml(group.key)}'; renderAlbums();">
         <div class="album-cover">${coverHtml}</div>
         <div class="album-title">${escapeHtml(group.name)}</div>
         <div class="album-meta">${group.tracks.length} pistas</div>
@@ -2732,9 +2763,45 @@ function renderAlbums() {
 
 function renderArtists() {
   const artistsContainer = document.getElementById("artistsContainer");
-  if (playlist.length === 0) {
-    document.getElementById("artistsCount").textContent = "0";
-    artistsContainer.innerHTML = `<div class="albums-grid"><div class="empty-state" style="grid-column: 1 / -1;">No hay artistas.</div></div>`;
+
+  if (selectedArtist) {
+    const artistTracks = playlist.filter(t => (t.artist || "Artista Desconocido").toLowerCase().trim() === selectedArtist);
+    const artistName = artistTracks[0]?.artist || "Artista Desconocido";
+
+    const artistIndices = artistTracks.map(t => playlist.indexOf(t));
+
+    let html = `
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-shrink: 0;">
+        <button class="icon-btn" onclick="selectedArtist=null; renderArtists();">← Volver a Artistas</button>
+        <div style="font-weight: bold; font-size: 14px; text-transform: uppercase;">${escapeHtml(artistName)}</div>
+      </div>
+      <div class="playlist-container">
+    `;
+
+    artistTracks.forEach(track => {
+      const idx = playlist.indexOf(track);
+      const isFav = favorites.has(track.baseName);
+      const thumbHtml = track.coverUrl ? `<img src="${track.coverUrl}" alt="Portada">` : `🎵`;
+
+      html += `
+        <div class="track-card ${idx === currentTrackIndex ? 'active-track' : ''}" data-index="${idx}">
+          <div class="track-card-left" onclick="playContext(${idx}, [${artistIndices}])">
+            <div class="track-thumb">${thumbHtml}</div>
+            <div class="track-text-container">
+              <div class="track-card-title">${escapeHtml(track.title)}</div>
+              <div class="track-card-meta">${escapeHtml(track.album)}</div>
+            </div>
+          </div>
+          <div class="track-card-actions">
+            <button class="fav-btn ${isFav ? 'active' : ''}" onclick="toggleFavorite('${track.baseName}', event)">★</button>
+            <button class="icon-btn" style="padding: 4px 8px; font-size: 11px;" onclick="addToQueue(${idx}, event)">+</button>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+    artistsContainer.innerHTML = html;
     return;
   }
 
@@ -2751,12 +2818,17 @@ function renderArtists() {
 
   document.getElementById("artistsCount").textContent = artistGroups.size;
 
+  if (artistGroups.size === 0) {
+    artistsContainer.innerHTML = `<div class="albums-grid"><div class="empty-state" style="grid-column: 1 / -1;">No hay artistas.</div></div>`;
+    return;
+  }
+
   let gridHtml = `<div class="albums-grid">`;
   artistGroups.forEach((group) => {
     if (searchQuery && !group.name.toLowerCase().includes(searchQuery)) return;
     const coverHtml = group.coverUrl ? `<img src="${group.coverUrl}" alt="Artista">` : `🎤`;
     gridHtml += `
-      <div class="album-card" onclick="selectedArtist='${group.key}'; renderArtists();">
+      <div class="album-card" onclick="selectedArtist='${escapeHtml(group.key)}'; renderArtists();">
         <div class="album-cover artist-cover-circle">${coverHtml}</div>
         <div class="album-title" style="text-align: center;">${escapeHtml(group.name)}</div>
         <div class="album-meta" style="text-align: center;">${group.tracks.length} pistas</div>
@@ -2773,7 +2845,6 @@ async function loadTrack(index, autoPlay = true) {
   currentTrackIndex = index;
   const track = playlist[index];
 
-  // Liberar el ObjectURL del audio anterior
   if (currentAudioUrl) {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
