@@ -1532,6 +1532,11 @@ let folderHandle = null;
 let isShuffle = false;
 let draggedQueueIndex = -1;
 
+// Control de Memoria y Blob URLs
+let createdBlobUrls = [];
+let currentAudioUrl = null;
+let currentMvUrl = null;
+
 // Variables de Control
 let repeatMode = 0;
 let skipSeconds = 10;
@@ -1559,6 +1564,28 @@ const miniPlayBtn = document.getElementById("miniPlayBtn");
 const fsPlayBtn = document.getElementById("fsPlayBtn");
 const fsVideoBg = document.getElementById("fsVideoBg");
 const fsCanvasBg = document.getElementById("fsCanvasBg");
+
+/* LIMPIEZA TOTAL DE MEMORIA */
+function clearPlaylistAndMemory() {
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
+  if (currentMvUrl) {
+    URL.revokeObjectURL(currentMvUrl);
+    currentMvUrl = null;
+  }
+  createdBlobUrls.forEach(url => URL.revokeObjectURL(url));
+  createdBlobUrls = [];
+
+  playlist = [];
+  queue = [];
+  originalQueue = [];
+  currentQueueIndex = -1;
+  currentTrackIndex = -1;
+  lrcMap.clear();
+  mvMap.clear();
+}
 
 /* PERSISTENCIA Y CONFIGURACIÓN */
 function openDB() {
@@ -1845,13 +1872,7 @@ async function selectFolderWithPicker() {
 async function scanFolderHandle(handle) {
   showLoading(`Escaneando carpeta "${handle.name}"...`);
   
-  playlist = [];
-  queue = [];
-  originalQueue = [];
-  currentQueueIndex = -1;
-  currentTrackIndex = -1;
-  lrcMap.clear();
-  mvMap.clear();
+  clearPlaylistAndMemory();
 
   let audioFiles = [];
   let imageMap = new Map();
@@ -1870,6 +1891,7 @@ async function scanFolderHandle(handle) {
           mvMap.set(baseName, file);
         } else if (/\.(jpg|jpeg|png|webp|gif)$/i.test(file.name)) {
           const imgUrl = URL.createObjectURL(file);
+          createdBlobUrls.push(imgUrl);
           imageMap.set(baseName, imgUrl);
           if (['cover', 'folder', 'album', 'front'].includes(baseName)) {
             defaultFolderCover = imgUrl;
@@ -2292,7 +2314,6 @@ function handleQueueDrop(e, targetQIdx) {
     const movedTrack = queue.splice(draggedQueueIndex, 1)[0];
     queue.splice(targetQIdx, 0, movedTrack);
 
-    // Ajustar el índice activo de la cola
     if (currentQueueIndex === draggedQueueIndex) {
       currentQueueIndex = targetQIdx;
     } else if (draggedQueueIndex < currentQueueIndex && targetQIdx >= currentQueueIndex) {
@@ -2338,7 +2359,6 @@ function renderQueue() {
       card.className = `track-card queue-card ${isPlayed ? 'played-track' : ''} ${isCurrent ? 'active-queue-track' : ''}`;
       card.draggable = true;
 
-      // Eventos Drag and Drop
       card.addEventListener("dragstart", (e) => handleQueueDragStart(e, qIdx));
       card.addEventListener("dragover", handleQueueDragOver);
       card.addEventListener("drop", (e) => handleQueueDrop(e, qIdx));
@@ -2379,37 +2399,51 @@ function goToCurrentArtist() {
   renderArtists();
 }
 
+/* PROCESAMIENTO OPTIMIZADO POR BLOQUES (BATCHING + MEMORY SAFE) */
 async function processNewTracks(newTracks) {
-  showLoading(`Cargando metadatos de ${newTracks.length} canciones...`);
+  const total = newTracks.length;
+  showLoading(`Cargando metadatos de ${total} canciones...`);
 
-  const promises = newTracks.map((track) => {
-    return new Promise((resolve) => {
-      if (!window.jsmediatags) return resolve(track);
-      window.jsmediatags.read(track.file, {
-        onSuccess: (tag) => {
-          const tags = tag.tags;
-          if (tags.title) track.title = tags.title;
-          if (tags.artist) track.artist = tags.artist;
-          if (tags.album) track.album = tags.album;
+  const chunkSize = 20;
+  for (let i = 0; i < total; i += chunkSize) {
+    const chunk = newTracks.slice(i, i + chunkSize);
+    showLoading(`Procesando metadatos (${Math.min(i + chunkSize, total)}/${total})...`);
 
-          if (tags.picture && !track.coverUrl) {
-            const { data, format } = tags.picture;
-            let base64 = "";
-            for (let k = 0; k < data.length; k++) base64 += String.fromCharCode(data[k]);
-            track.coverUrl = `data:${format};base64,${window.btoa(base64)}`;
-          }
+    await Promise.all(chunk.map((track) => {
+      return new Promise((resolve) => {
+        if (!window.jsmediatags) return resolve(track);
+        window.jsmediatags.read(track.file, {
+          onSuccess: (tag) => {
+            const tags = tag.tags;
+            if (tags.title) track.title = tags.title;
+            if (tags.artist) track.artist = tags.artist;
+            if (tags.album) track.album = tags.album;
 
-          if (tags.USLT) {
-            track.embeddedLyrics = typeof tags.USLT === "object" ? tags.USLT.data?.lyrics : tags.USLT;
-          }
-          resolve(track);
-        },
-        onError: () => resolve(track)
+            // Optimización clave: Blob ultra ligero en lugar de Base64 pesada
+            if (tags.picture && !track.coverUrl) {
+              try {
+                const { data, format } = tags.picture;
+                const byteArray = new Uint8Array(data);
+                const blob = new Blob([byteArray], { type: format });
+                const blobUrl = URL.createObjectURL(blob);
+                track.coverUrl = blobUrl;
+                createdBlobUrls.push(blobUrl);
+              } catch (e) { console.error(e); }
+            }
+
+            if (tags.USLT) {
+              track.embeddedLyrics = typeof tags.USLT === "object" ? tags.USLT.data?.lyrics : tags.USLT;
+            }
+            resolve(track);
+          },
+          onError: () => resolve(track)
+        });
       });
-    });
-  });
+    }));
 
-  await Promise.all(promises);
+    // Liberar hilo principal para mantener interfaz responsiva
+    await new Promise(r => setTimeout(r, 0));
+  }
 
   playlist.push(...newTracks);
   sortPlaylist();
@@ -2422,8 +2456,7 @@ document.getElementById("folderInput").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files);
   if (!files.length) return;
 
-  playlist = []; queue = []; originalQueue = [];
-  currentQueueIndex = -1; currentTrackIndex = -1;
+  clearPlaylistAndMemory();
 
   let audioCount = 0;
   let imageMap = new Map();
@@ -2438,6 +2471,7 @@ document.getElementById("folderInput").addEventListener("change", async (e) => {
     else if (/\.(mp4|webm|mkv|mov|avi)$/i.test(file.name)) mvMap.set(baseName, file);
     else if (/\.(jpg|jpeg|png|webp|gif)$/i.test(file.name)) {
       const imgUrl = URL.createObjectURL(file);
+      createdBlobUrls.push(imgUrl);
       imageMap.set(baseName, imgUrl);
       if (['cover', 'folder', 'album', 'front'].includes(baseName)) defaultFolderCover = imgUrl;
     }
@@ -2523,6 +2557,12 @@ function updateMVFullscreen() {
   if (!fsOverlay.classList.contains("open") || currentTrackIndex < 0) {
     fsVideoBg.style.display = "none";
     fsVideoBg.pause();
+    if (currentMvUrl) {
+      URL.revokeObjectURL(currentMvUrl);
+      currentMvUrl = null;
+      fsVideoBg.removeAttribute("src");
+      delete fsVideoBg.dataset.trackKey;
+    }
     return;
   }
 
@@ -2531,7 +2571,11 @@ function updateMVFullscreen() {
 
   if (mvFile) {
     if (fsVideoBg.dataset.trackKey !== track.baseName) {
-      fsVideoBg.src = URL.createObjectURL(mvFile);
+      if (currentMvUrl) {
+        URL.revokeObjectURL(currentMvUrl);
+      }
+      currentMvUrl = URL.createObjectURL(mvFile);
+      fsVideoBg.src = currentMvUrl;
       fsVideoBg.dataset.trackKey = track.baseName;
     }
     fsVideoBg.style.display = "block";
@@ -2541,6 +2585,10 @@ function updateMVFullscreen() {
   } else {
     fsVideoBg.style.display = "none";
     fsVideoBg.pause();
+    if (currentMvUrl) {
+      URL.revokeObjectURL(currentMvUrl);
+      currentMvUrl = null;
+    }
     fsVideoBg.removeAttribute("src");
     delete fsVideoBg.dataset.trackKey;
     fsLyricsBox.classList.remove("lyrics-hidden");
@@ -2721,7 +2769,14 @@ async function loadTrack(index, autoPlay = true) {
   currentTrackIndex = index;
   const track = playlist[index];
 
-  audio.src = URL.createObjectURL(track.file);
+  // Liberar el ObjectURL del audio anterior
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
+  currentAudioUrl = URL.createObjectURL(track.file);
+  audio.src = currentAudioUrl;
+
   updateTrackMetadataUI(track.title, track.artist);
   updateMediaSessionMetaData(track);
 
