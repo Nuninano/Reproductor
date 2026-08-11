@@ -1377,7 +1377,7 @@ button:active { transform: translateY(0) scale(0.96); }
 <!-- FULLSCREEN OVERLAY -->
 <div class="fullscreen-overlay" id="fullscreenOverlay">
   <canvas id="fsCanvasBg" class="fs-canvas-bg"></canvas>
-  <video id="fsVideoBg" class="fs-video-bg" muted playsinline></video>
+  <video id="fsVideoBg" class="fs-video-bg" muted playsinline loop></video>
 
   <div class="fs-top-bar">
     <button class="btn-fullscreen-trigger" style="position: static;" onclick="toggleFullscreen(false)" title="Salir de pantalla completa">⤡</button>
@@ -2579,7 +2579,11 @@ function updateMVFullscreen() {
       fsVideoBg.dataset.trackKey = track.baseName;
     }
     fsVideoBg.style.display = "block";
-    fsVideoBg.currentTime = audio.currentTime;
+    if (fsVideoBg.duration) {
+      fsVideoBg.currentTime = audio.currentTime % fsVideoBg.duration;
+    } else {
+      fsVideoBg.currentTime = audio.currentTime;
+    }
     if (!audio.paused) fsVideoBg.play().catch(() => {});
     if (toggleBtn) toggleBtn.style.display = "inline-flex";
   } else {
@@ -2975,8 +2979,11 @@ audio.ontimeupdate = () => {
     document.getElementById("fsCurrentTime").textContent = currFormatted;
     document.getElementById("fsDurationTime").textContent = durFormatted;
 
-    if (fsVideoBg.style.display !== "none" && Math.abs(fsVideoBg.currentTime - audio.currentTime) > 0.3) {
-      fsVideoBg.currentTime = audio.currentTime;
+    if (fsVideoBg.style.display !== "none" && fsVideoBg.duration) {
+      const expectedVideoTime = audio.currentTime % fsVideoBg.duration;
+      if (Math.abs(fsVideoBg.currentTime - expectedVideoTime) > 0.3) {
+        fsVideoBg.currentTime = expectedVideoTime;
+      }
     }
   }
 
