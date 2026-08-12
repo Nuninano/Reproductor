@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Reproductor MP3 Pro - Mobile Fork (Improved Loading)</title>
+<title>Reproductor MP3 Pro - Mobile Optimized</title>
 
 <!-- Favicon SVG -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100%' height='100%' rx='22' fill='%23000000'/><text x='50%' y='54%' font-size='65' font-family='sans-serif' text-anchor='middle' dominant-baseline='middle' fill='%23ffffff'>♫</text></svg>" type="image/svg+xml">
@@ -1097,12 +1097,21 @@ input[type=file] { display: none; }
     </button>
 
     <label for="audioFiles" class="file-btn" style="opacity: 0.75; font-size: 11px;">
-      Selección manual (archivos sueltos)
+      Selección manual (archivos sueltos + caché)
     </label>
-    <input type="file" id="audioFiles" accept="audio/*,.lrc,video/*" multiple>
+    <input type="file" id="audioFiles" accept="audio/*,.lrc,video/*,.json,application/json" multiple>
 
     <!-- Fallback oculto para webkitdirectory -->
-    <input type="file" id="folderInput" webkitdirectory multiple accept="audio/*,.lrc,video/*" style="display:none">
+    <input type="file" id="folderInput" webkitdirectory multiple accept="audio/*,.lrc,video/*,.json,application/json" style="display:none">
+
+    <div class="section-subtitle">Acelerar carga</div>
+    <a href="https://nuninano.github.io/Reproductor/library-cache-tool.html" target="_blank" rel="noopener"
+       class="file-btn" style="text-decoration:none; text-align:center; background:#1a1a1a; border:1px solid #333; color:var(--accent-color); margin-bottom:8px;">
+      ⚡ Generar library-cache.json
+    </a>
+    <p style="font-size:11px; color:var(--text-muted); margin:0 0 12px; line-height:1.4;">
+      Usa la herramienta para crear un caché de metadatos. Luego cárgalo junto a tus canciones y el reproductor lo usará automáticamente.
+    </p>
 
     <div class="section-subtitle">Reproducción</div>
     <div class="setting-row">
@@ -1128,6 +1137,15 @@ input[type=file] { display: none; }
         <option value="30">30 Minutos</option>
         <option value="60">60 Minutos</option>
       </select>
+    </div>
+
+    <div class="section-subtitle">Metadatos</div>
+    <div class="setting-row">
+      <span>Carga ligera<br><small style="color:var(--text-muted);font-weight:400">Sin portadas ni títulos (solo artista/álbum)</small></span>
+      <label class="switch">
+        <input type="checkbox" id="lightMetaToggle" onchange="saveSettings()">
+        <span class="slider"></span>
+      </label>
     </div>
 
     <div class="section-subtitle">Apariencia y Visualizador</div>
@@ -1300,6 +1318,7 @@ function saveSettings() {
     let darkToggle = document.getElementById("darkModeToggle");
     let autoScrollToggle = document.getElementById("autoScrollToggle");
     let visualizerToggle = document.getElementById("visualizerToggle");
+    let lightMetaToggle = document.getElementById("lightMetaToggle");
     let skipSecInput = document.getElementById("skipSecondsInput");
 
     skipSeconds = parseInt(skipSecInput.value, 10) || 10;
@@ -1308,6 +1327,7 @@ function saveSettings() {
       darkMode: darkToggle.checked,
       autoScroll: autoScrollToggle.checked,
       visualizer: visualizerToggle.checked,
+      lightMeta: lightMetaToggle ? lightMetaToggle.checked : false,
       skipSeconds: skipSeconds,
       favorites: Array.from(favorites)
     };
@@ -1321,11 +1341,13 @@ function applySettingsUI(settings) {
   let darkToggle = document.getElementById("darkModeToggle");
   let autoScrollToggle = document.getElementById("autoScrollToggle");
   let visualizerToggle = document.getElementById("visualizerToggle");
+  let lightMetaToggle = document.getElementById("lightMetaToggle");
   let skipSecInput = document.getElementById("skipSecondsInput");
 
   if (settings.darkMode !== undefined) darkToggle.checked = settings.darkMode;
   if (settings.autoScroll !== undefined) autoScrollToggle.checked = settings.autoScroll;
   if (settings.visualizer !== undefined) visualizerToggle.checked = settings.visualizer;
+  if (settings.lightMeta !== undefined && lightMetaToggle) lightMetaToggle.checked = settings.lightMeta;
   if (settings.skipSeconds !== undefined) {
     skipSeconds = settings.skipSeconds;
     skipSecInput.value = skipSeconds;
@@ -1539,7 +1561,7 @@ async function collectFilesRecursive(dirHandle, files, depth = 0) {
       try {
         const file = await entry.getFile();
         const name = file.name.toLowerCase();
-        if (/\.(mp3|flac|m4a|ogg|wav|aac|opus|lrc|mp4|webm|mkv|mov)$/i.test(name)) {
+        if (/\.(mp3|flac|m4a|ogg|wav|aac|opus|lrc|mp4|webm|mkv|mov|json)$/i.test(name)) {
           files.push(file);
         }
       } catch (e) {
@@ -1559,11 +1581,47 @@ async function handleIncomingFiles(files, addMode = false) {
     if (searchInput) searchInput.value = "";
   }
 
+  // Buscar library-cache.json entre los archivos
+  let cacheFile = null;
+  const otherFiles = [];
+  for (const f of files) {
+    const name = f.name.toLowerCase();
+    if (name === "library-cache.json" || name.endsWith("/library-cache.json")) {
+      cacheFile = f;
+    } else {
+      otherFiles.push(f);
+    }
+  }
+
+  let cacheMap = null; // baseName -> datos del caché
+  if (cacheFile) {
+    try {
+      const text = await cacheFile.text();
+      const data = JSON.parse(text);
+      if (data && Array.isArray(data.tracks)) {
+        cacheMap = new Map();
+        data.tracks.forEach(t => {
+          if (t.baseName) cacheMap.set(t.baseName, t);
+          // también indexar por nombre de archivo por si acaso
+          if (t.file) {
+            const bn = t.file.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+            if (!cacheMap.has(bn)) cacheMap.set(bn, t);
+          }
+        });
+        showToast(`Caché detectado (${data.count || data.tracks.length} entradas)`);
+      }
+    } catch (e) {
+      console.warn("No se pudo leer library-cache.json:", e);
+      showToast("Caché inválido, analizando normal…");
+    }
+  }
+
   let audioFiles = [];
   let imageMap = new Map();
   let defaultFolderCover = null;
 
-  files.forEach(file => {
+  // Clasificación rápida
+  otherFiles.forEach(file => {
     processSingleFile(file, audioFiles, imageMap, (cov) => defaultFolderCover = cov);
   });
 
@@ -1573,18 +1631,69 @@ async function handleIncomingFiles(files, addMode = false) {
     return;
   }
 
-  const newTracks = audioFiles.map(item => ({
-    file: item.file,
-    title: item.file.name.replace(/\.[^/.]+$/, ""),
-    artist: "Artista Desconocido",
-    album: "Álbum Desconocido",
-    baseName: item.baseName,
-    coverUrl: imageMap.get(item.baseName) || defaultFolderCover || null
-  }));
+  // Crear tracks: usar caché si existe
+  const newTracks = [];
+  const needsEnrichment = [];
 
-  await processNewTracks(newTracks);
+  for (const item of audioFiles) {
+    const cached = cacheMap ? cacheMap.get(item.baseName) : null;
+
+    if (cached) {
+      // Datos ya procesados → listo al instante
+      const track = {
+        file: item.file,
+        title: cached.title || item.file.name.replace(/\.[^/.]+$/, ""),
+        artist: cached.artist || "Artista Desconocido",
+        album: cached.album || "Álbum Desconocido",
+        baseName: item.baseName,
+        coverUrl: null,
+        metaLoaded: true,
+        embeddedLyrics: cached.lyrics || null
+      };
+
+      // Portada desde caché (data URL) o desde imagen suelta
+      if (cached.cover && typeof cached.cover === "string" && cached.cover.startsWith("data:")) {
+        track.coverUrl = cached.cover;
+      } else if (imageMap.has(item.baseName)) {
+        track.coverUrl = imageMap.get(item.baseName);
+      } else if (defaultFolderCover) {
+        track.coverUrl = defaultFolderCover;
+      }
+
+      newTracks.push(track);
+    } else {
+      // Sin caché → carga mínima + enriquecer después
+      const track = {
+        file: item.file,
+        title: item.file.name.replace(/\.[^/.]+$/, ""),
+        artist: "Artista Desconocido",
+        album: "Álbum Desconocido",
+        baseName: item.baseName,
+        coverUrl: imageMap.get(item.baseName) || defaultFolderCover || null,
+        metaLoaded: false
+      };
+      newTracks.push(track);
+      needsEnrichment.push(track);
+    }
+  }
+
+  playlist.push(...newTracks);
+  playlist.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base', numeric: true }));
+
+  hideLoading();
   toggleModal('settingsModal', false);
-  showToast(`${newTracks.length} canciones ${addMode ? "añadidas" : "cargadas"}`);
+  renderCurrentView();
+
+  const cachedCount = newTracks.length - needsEnrichment.length;
+  if (cachedCount > 0 && needsEnrichment.length === 0) {
+    showToast(`${newTracks.length} canciones cargadas desde caché`);
+  } else if (cachedCount > 0) {
+    showToast(`${cachedCount} desde caché · ${needsEnrichment.length} por analizar…`);
+    enrichTracksInBackground(needsEnrichment);
+  } else {
+    showToast(`${newTracks.length} canciones cargadas (cargando detalles…)`);
+    enrichTracksInBackground(needsEnrichment);
+  }
 }
 
 /* CARGA Y MANEJO DE ARCHIVOS */
@@ -1601,72 +1710,114 @@ function processSingleFile(file, audioFiles, imageMap, setDefaultCover) {
     createdBlobUrls.push(imgUrl);
     imageMap.set(baseName, imgUrl);
     if (['cover', 'folder', 'album', 'front'].includes(baseName)) setDefaultCover(imgUrl);
-  } else if (file.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a)$/i.test(file.name)) {
+  } else if (file.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i.test(file.name)) {
     audioFiles.push({ file, baseName });
   }
 }
 
-/* PROCESAMIENTO OPTIMIZADO POR BLOQUES (BATCHING + MEMORY SAFE) */
-async function processNewTracks(newTracks) {
-  const total = newTracks.length;
-  showLoading(`Cargando metadatos de ${total} canciones...`);
+/* =========================================================
+   CARGA RÁPIDA + ENRIQUECIMIENTO EN BACKGROUND
+   ========================================================= */
+let enrichmentRunning = false;
+let enrichmentQueue = [];
+
+async function enrichTracksInBackground(tracks) {
+  // Añadir a la cola
+  enrichmentQueue.push(...tracks.filter(t => !t.metaLoaded));
+  
+  if (enrichmentRunning) return;
+  enrichmentRunning = true;
+
+  const total = enrichmentQueue.length;
+  let processed = 0;
+  const chunkSize = 8; // más pequeño = más fluido en móvil
 
   try {
-    const chunkSize = 15; // Lote reducido ideal para procesadores móviles
-    for (let i = 0; i < total; i += chunkSize) {
-      const chunk = newTracks.slice(i, i + chunkSize);
-      showLoading(`Procesando metadatos (${Math.min(i + chunkSize, total)}/${total})...`);
+    while (enrichmentQueue.length > 0) {
+      const chunk = enrichmentQueue.splice(0, chunkSize);
+      
+      await Promise.all(chunk.map(track => enrichSingleTrack(track)));
+      
+      processed += chunk.length;
+      
+      // Actualizar UI cada cierto tiempo sin saturar
+      if (processed % 24 === 0 || enrichmentQueue.length === 0) {
+        renderCurrentView(); // refresca portadas y títulos
+      }
+      
+      // Ceder el hilo para que la UI no se congele
+      await new Promise(r => setTimeout(r, 12));
+    }
+  } catch (e) {
+    console.error("Error enriqueciendo metadatos:", e);
+  } finally {
+    enrichmentRunning = false;
+    renderCurrentView();
+    if (processed > 0) {
+      showToast(`Detalles cargados (${processed} canciones)`);
+    }
+  }
+}
 
-      await Promise.all(chunk.map((track) => {
-        return new Promise((resolve) => {
-          if (!window.jsmediatags) return resolve(track);
-          try {
-            window.jsmediatags.read(track.file, {
-              onSuccess: (tag) => {
-                try {
-                  const tags = tag.tags;
-                  if (tags.title) track.title = String(tags.title);
-                  if (tags.artist) track.artist = String(tags.artist);
-                  if (tags.album) track.album = String(tags.album);
+function isLightMetaEnabled() {
+  const toggle = document.getElementById("lightMetaToggle");
+  return toggle ? toggle.checked : false;
+}
 
-                  // Creación de Blob ligera en lugar de Base64 pesada
-                  if (tags.picture && !track.coverUrl) {
-                    const { data, format } = tags.picture;
-                    const byteArray = new Uint8Array(data);
-                    const blob = new Blob([byteArray], { type: format });
-                    const blobUrl = URL.createObjectURL(blob);
-                    track.coverUrl = blobUrl;
-                    createdBlobUrls.push(blobUrl);
-                  }
-
-                  if (tags.USLT) {
-                    track.embeddedLyrics = typeof tags.USLT === "object" ? tags.USLT.data?.lyrics : String(tags.USLT);
-                  }
-                } catch (err) {}
-                resolve(track);
-              },
-              onError: () => resolve(track)
-            });
-          } catch (e) {
-            resolve(track);
-          }
-        });
-      }));
-
-      // Ceder control al hilo de renderizado móvil
-      await new Promise(r => setTimeout(r, 0));
+function enrichSingleTrack(track) {
+  return new Promise((resolve) => {
+    if (!window.jsmediatags || track.metaLoaded) {
+      track.metaLoaded = true;
+      return resolve();
     }
 
-    playlist.push(...newTracks);
-    playlist.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base', numeric: true }));
+    const lightMode = isLightMetaEnabled();
 
-    restoreSavedQueue();
-  } catch (e) {
-    console.error("Error cargando metadatos:", e);
-  } finally {
-    hideLoading();
-    renderCurrentView();
-  }
+    try {
+      window.jsmediatags.read(track.file, {
+        onSuccess: (tag) => {
+          try {
+            const tags = tag.tags;
+
+            // En modo ligero: NO tocamos el título (se queda el nombre del archivo)
+            // y NO cargamos portadas. Solo artista y álbum.
+            if (!lightMode) {
+              if (tags.title) track.title = String(tags.title);
+            }
+
+            if (tags.artist) track.artist = String(tags.artist);
+            if (tags.album) track.album = String(tags.album);
+
+            // Portadas solo si NO está en modo ligero
+            if (!lightMode && tags.picture && !track.coverUrl) {
+              const { data, format } = tags.picture;
+              const byteArray = new Uint8Array(data);
+              const blob = new Blob([byteArray], { type: format || 'image/jpeg' });
+              const blobUrl = URL.createObjectURL(blob);
+              track.coverUrl = blobUrl;
+              createdBlobUrls.push(blobUrl);
+            }
+
+            // Letras embebidas siempre se intentan (son ligeras)
+            if (tags.USLT) {
+              track.embeddedLyrics = typeof tags.USLT === "object" 
+                ? (tags.USLT.data?.lyrics || tags.USLT.lyrics) 
+                : String(tags.USLT);
+            }
+          } catch (err) {}
+          track.metaLoaded = true;
+          resolve();
+        },
+        onError: () => {
+          track.metaLoaded = true;
+          resolve();
+        }
+      });
+    } catch (e) {
+      track.metaLoaded = true;
+      resolve();
+    }
+  });
 }
 
 function restoreSavedQueue() {

@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Library Cache Tool — Nuninano</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+<style>
+:root {
+  --bg: #0f0f0f;
+  --card: #141414;
+  --border: #262626;
+  --text: #ffffff;
+  --muted: #888;
+  --accent: #00a884;
+  --accent-hover: #00ffd5;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+main {
+  flex: 1;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 20px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.desc {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+.btn {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 10px;
+  transition: opacity 0.15s;
+}
+.btn:hover { opacity: 0.9; }
+.btn:active { transform: scale(0.98); }
+.btn-secondary {
+  background: #222;
+  border: 1px solid #333;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.progress-wrap {
+  display: none;
+  margin-top: 16px;
+}
+.progress-bar {
+  height: 6px;
+  background: #222;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent-hover);
+  width: 0%;
+  transition: width 0.2s;
+}
+.progress-text {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.options {
+  margin: 16px 0;
+  font-size: 13px;
+}
+.options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.options input[type=checkbox] {
+  accent-color: var(--accent);
+}
+.log {
+  margin-top: 16px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-family: monospace;
+  background: #0a0a0a;
+  border-radius: 8px;
+  padding: 12px;
+  display: none;
+}
+.log-line { margin-bottom: 2px; }
+.success-box {
+  display: none;
+  background: #0d221e;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+  text-align: center;
+}
+.success-box h3 {
+  margin: 0 0 8px;
+  color: var(--accent-hover);
+  font-size: 15px;
+}
+.success-box p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+footer {
+  text-align: center;
+  padding: 16px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+input[type=file] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LIBRARY CACHE TOOL</h1>
+  <span style="font-size:12px;color:var(--muted)">v1</span>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Generar caché de biblioteca</h2>
+    <p class="desc">
+      Analiza tu carpeta de música y genera un archivo <code>library-cache.json</code> 
+      con todos los metadatos ya procesados. El reproductor podrá cargar la biblioteca 
+      casi al instante usando este archivo.
+    </p>
+
+    <div class="options">
+      <label>
+        <input type="checkbox" id="includeCovers" checked>
+        Incluir portadas (más pesado, pero más completo)
+      </label>
+      <label>
+        <input type="checkbox" id="includeLyrics">
+        Incluir letras embebidas (USLT)
+      </label>
+    </div>
+
+    <button class="btn" id="btnFolder" onclick="startWithFolder()">
+      📁 Seleccionar carpeta de música
+    </button>
+    <button class="btn btn-secondary" id="btnFiles" onclick="document.getElementById('fileInput').click()">
+      ＋ Seleccionar archivos sueltos
+    </button>
+
+    <input type="file" id="fileInput" accept="audio/*,.lrc,image/*" multiple>
+    <input type="file" id="folderInput" webkitdirectory multiple>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text" id="progressText">Preparando…</div>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <div class="success-box" id="successBox">
+      <h3>✓ Caché generado</h3>
+      <p id="successInfo"></p>
+      <button class="btn" id="btnDownload" onclick="downloadCache()">
+        ⬇ Descargar library-cache.json
+      </button>
+    </div>
+  </div>
+
+  <div class="card" style="font-size:13px;color:var(--muted);line-height:1.6">
+    <strong style="color:var(--text)">Cómo usarlo con el reproductor:</strong><br>
+    1. Genera el archivo con esta herramienta.<br>
+    2. Colócalo en la misma carpeta que tus canciones (o cárgalo junto a ellas).<br>
+    3. El reproductor lo detectará automáticamente y cargará los datos al instante.
+  </div>
+</main>
+
+<footer>
+  Nuninano Hub — Herramienta de caché de biblioteca
+</footer>
+
+<script>
+let cacheData = null;
+let isProcessing = false;
+
+function log(msg) {
+  const el = document.getElementById("log");
+  el.style.display = "block";
+  const line = document.createElement("div");
+  line.className = "log-line";
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setProgress(current, total, label) {
+  const wrap = document.getElementById("progressWrap");
+  const fill = document.getElementById("progressFill");
+  const text = document.getElementById("progressText");
+  wrap.style.display = "block";
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  fill.style.width = pct + "%";
+  text.textContent = label || `${current} / ${total} (${pct}%)`;
+}
+
+function setButtonsDisabled(disabled) {
+  document.getElementById("btnFolder").disabled = disabled;
+  document.getElementById("btnFiles").disabled = disabled;
+}
+
+async function startWithFolder() {
+  if ('showDirectoryPicker' in window) {
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+      setButtonsDisabled(true);
+      document.getElementById("log").innerHTML = "";
+      document.getElementById("successBox").style.display = "none";
+      log("Escaneando carpeta…");
+
+      const files = [];
+      await collectFiles(dirHandle, files);
+      log(`Encontrados ${files.length} archivos relevantes`);
+      await processFiles(files);
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.warn(err);
+    }
+  }
+  // Fallback
+  document.getElementById("folderInput").click();
+}
+
+async function collectFiles(dirHandle, files, depth = 0) {
+  if (depth > 6) return;
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === "file") {
+      try {
+        const file = await entry.getFile();
+        const name = file.name.toLowerCase();
+        if (/\.(mp3|flac|m4a|ogg|wav|aac|opus|lrc|jpg|jpeg|png|webp)$/i.test(name)) {
+          files.push(file);
+        }
+      } catch (e) {}
+    } else if (entry.kind === "directory") {
+      await collectFiles(entry, files, depth + 1);
+    }
+  }
+}
+
+document.getElementById("folderInput").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+  setButtonsDisabled(true);
+  document.getElementById("log").innerHTML = "";
+  document.getElementById("successBox").style.display = "none";
+  await processFiles(files);
+});
+
+document.getElementById("fileInput").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+  setButtonsDisabled(true);
+  document.getElementById("log").innerHTML = "";
+  document.getElementById("successBox").style.display = "none";
+  await processFiles(files);
+});
+
+async function processFiles(files) {
+  isProcessing = true;
+  const includeCovers = document.getElementById("includeCovers").checked;
+  const includeLyrics = document.getElementById("includeLyrics").checked;
+
+  // Separar audio, lrc e imágenes
+  const audioFiles = [];
+  const lrcMap = new Map();
+  const imageMap = new Map();
+
+  files.forEach(f => {
+    const name = f.name.toLowerCase();
+    const base = f.name.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+    if (name.endsWith(".lrc")) {
+      lrcMap.set(base, f);
+    } else if (/\.(jpg|jpeg|png|webp)$/i.test(name)) {
+      imageMap.set(base, f);
+    } else if (/\.(mp3|flac|m4a|ogg|wav|aac|opus)$/i.test(name) || f.type.startsWith("audio/")) {
+      audioFiles.push({ file: f, baseName: base });
+    }
+  });
+
+  if (audioFiles.length === 0) {
+    log("No se encontraron archivos de audio");
+    setButtonsDisabled(false);
+    isProcessing = false;
+    return;
+  }
+
+  log(`Procesando ${audioFiles.length} canciones…`);
+  setProgress(0, audioFiles.length, "Iniciando…");
+
+  const tracks = [];
+  const chunkSize = 6;
+
+  for (let i = 0; i < audioFiles.length; i += chunkSize) {
+    const chunk = audioFiles.slice(i, i + chunkSize);
+
+    await Promise.all(chunk.map(async (item) => {
+      const track = {
+        file: item.file.name,
+        title: item.file.name.replace(/\.[^/.]+$/, ""),
+        artist: "Artista Desconocido",
+        album: "Álbum Desconocido",
+        baseName: item.baseName,
+        hasCover: false,
+        cover: null,
+        hasLyrics: false,
+        lyrics: null
+      };
+
+      // Portada de archivo de imagen suelta
+      if (imageMap.has(item.baseName)) {
+        try {
+          const imgFile = imageMap.get(item.baseName);
+          const dataUrl = await fileToDataURL(imgFile);
+          track.cover = dataUrl;
+          track.hasCover = true;
+        } catch (e) {}
+      }
+
+      // Leer tags
+      await new Promise((resolve) => {
+        if (!window.jsmediatags) return resolve();
+        try {
+          window.jsmediatags.read(item.file, {
+            onSuccess: (tag) => {
+              try {
+                const t = tag.tags;
+                if (t.title) track.title = String(t.title);
+                if (t.artist) track.artist = String(t.artist);
+                if (t.album) track.album = String(t.album);
+
+                if (includeCovers && t.picture && !track.cover) {
+                  const { data, format } = t.picture;
+                  const base64 = arrayBufferToBase64(data);
+                  track.cover = `data:${format || 'image/jpeg'};base64,${base64}`;
+                  track.hasCover = true;
+                }
+
+                if (includeLyrics && t.USLT) {
+                  track.lyrics = typeof t.USLT === "object"
+                    ? (t.USLT.data?.lyrics || t.USLT.lyrics || null)
+                    : String(t.USLT);
+                  track.hasLyrics = !!track.lyrics;
+                }
+              } catch (e) {}
+              resolve();
+            },
+            onError: () => resolve()
+          });
+        } catch (e) {
+          resolve();
+        }
+      });
+
+      tracks.push(track);
+    }));
+
+    setProgress(Math.min(i + chunkSize, audioFiles.length), audioFiles.length);
+    await new Promise(r => setTimeout(r, 8));
+  }
+
+  // Ordenar
+  tracks.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }));
+
+  cacheData = {
+    version: 1,
+    generated: new Date().toISOString(),
+    tool: "Nuninano Library Cache Tool v1",
+    options: { includeCovers, includeLyrics },
+    count: tracks.length,
+    tracks
+  };
+
+  const sizeKB = Math.round(JSON.stringify(cacheData).length / 1024);
+  log(`✓ Listo: ${tracks.length} canciones, ~${sizeKB} KB`);
+  setProgress(audioFiles.length, audioFiles.length, "Completado");
+
+  document.getElementById("successInfo").textContent =
+    `${tracks.length} canciones procesadas · ~${sizeKB} KB`;
+  document.getElementById("successBox").style.display = "block";
+
+  setButtonsDisabled(false);
+  isProcessing = false;
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function fileToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function downloadCache() {
+  if (!cacheData) return;
+  const blob = new Blob([JSON.stringify(cacheData, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "library-cache.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
