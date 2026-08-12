@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Reproductor MP3 Pro - Mobile Fork</title>
+<title>Reproductor MP3 Pro - Mobile Fork (Improved Loading)</title>
 
 <!-- Favicon SVG -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100%' height='100%' rx='22' fill='%23000000'/><text x='50%' y='54%' font-size='65' font-family='sans-serif' text-anchor='middle' dominant-baseline='middle' fill='%23ffffff'>♫</text></svg>" type="image/svg+xml">
@@ -935,7 +935,7 @@ input[type=file] { display: none; }
   <button class="icon-head-btn" onclick="toggleSearch()" title="Buscar">🔍︎</button>
   <span class="header-title" id="headerTitle">Canciones</span>
   <div class="mobile-header-actions">
-    <button class="icon-head-btn" onclick="document.getElementById('audioFiles').click()" title="Cargar Archivos">🗀</button>
+    <button class="icon-head-btn" onclick="loadMusicSmart(false)" title="Cargar carpeta / archivos">🗀</button>
     <button class="icon-head-btn" onclick="toggleModal('settingsModal', true)" title="Configuración">⚙</button>
   </div>
 </header>
@@ -1087,8 +1087,22 @@ input[type=file] { display: none; }
     </div>
 
     <div class="section-subtitle">Importar Contenido</div>
-    <label for="audioFiles" class="file-btn">SELECCIONAR MP3, LRC O VÍDEOS</label>
+
+    <button class="file-btn" onclick="loadMusicSmart(false)" style="background: var(--accent-fab); margin-bottom: 8px;">
+      📁 Cargar / Reemplazar carpeta
+    </button>
+
+    <button class="file-btn" onclick="loadMusicSmart(true)" style="margin-bottom: 8px;">
+      ＋ Añadir más archivos
+    </button>
+
+    <label for="audioFiles" class="file-btn" style="opacity: 0.75; font-size: 11px;">
+      Selección manual (archivos sueltos)
+    </label>
     <input type="file" id="audioFiles" accept="audio/*,.lrc,video/*" multiple>
+
+    <!-- Fallback oculto para webkitdirectory -->
+    <input type="file" id="folderInput" webkitdirectory multiple accept="audio/*,.lrc,video/*" style="display:none">
 
     <div class="section-subtitle">Reproducción</div>
     <div class="setting-row">
@@ -1459,6 +1473,118 @@ function toggleLyricsView() {
     lyricsBox.style.display = "none";
     btn.classList.remove("active-toggle");
   }
+}
+
+/* =========================================================
+   SISTEMA DE CARGA INTELIGENTE
+   1. showDirectoryPicker (Chrome Android 132+)
+   2. webkitdirectory
+   3. input multiple (fallback)
+   ========================================================= */
+
+async function loadMusicSmart(addMode = false) {
+  // addMode = true  → añadir a la biblioteca existente
+  // addMode = false → reemplazar toda la biblioteca
+
+  // 1. Mejor opción: File System Access API
+  if ('showDirectoryPicker' in window) {
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+      showLoading(addMode ? "Añadiendo canciones de la carpeta..." : "Escaneando carpeta...");
+
+      const files = [];
+      await collectFilesRecursive(dirHandle, files);
+
+      if (files.length === 0) {
+        hideLoading();
+        showToast("No se encontraron archivos de audio / LRC / vídeo");
+        return;
+      }
+
+      await handleIncomingFiles(files, addMode);
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // usuario canceló
+      console.warn("showDirectoryPicker falló, usando fallback:", err);
+    }
+  }
+
+  // 2. Fallback: webkitdirectory
+  const folderInput = document.getElementById("folderInput");
+  if (folderInput) {
+    // Guardamos el modo para el onchange
+    folderInput.dataset.addMode = addMode ? "1" : "0";
+    folderInput.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (files.length === 0) return;
+
+      const isAdd = e.target.dataset.addMode === "1";
+      showLoading(isAdd ? "Añadiendo archivos..." : "Procesando carpeta...");
+      await handleIncomingFiles(files, isAdd);
+    };
+    folderInput.click();
+    return;
+  }
+
+  // 3. Último recurso
+  document.getElementById("audioFiles").click();
+}
+
+async function collectFilesRecursive(dirHandle, files, depth = 0) {
+  if (depth > 5) return; // límite de seguridad
+
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === "file") {
+      try {
+        const file = await entry.getFile();
+        const name = file.name.toLowerCase();
+        if (/\.(mp3|flac|m4a|ogg|wav|aac|opus|lrc|mp4|webm|mkv|mov)$/i.test(name)) {
+          files.push(file);
+        }
+      } catch (e) {
+        // ignorar archivos que no se puedan leer
+      }
+    } else if (entry.kind === "directory") {
+      await collectFilesRecursive(entry, files, depth + 1);
+    }
+  }
+}
+
+async function handleIncomingFiles(files, addMode = false) {
+  if (!addMode) {
+    clearPlaylistAndMemory();
+    searchQuery = "";
+    const searchInput = document.getElementById("searchInput");
+    if (searchInput) searchInput.value = "";
+  }
+
+  let audioFiles = [];
+  let imageMap = new Map();
+  let defaultFolderCover = null;
+
+  files.forEach(file => {
+    processSingleFile(file, audioFiles, imageMap, (cov) => defaultFolderCover = cov);
+  });
+
+  if (audioFiles.length === 0) {
+    hideLoading();
+    showToast("No se encontraron canciones válidas");
+    return;
+  }
+
+  const newTracks = audioFiles.map(item => ({
+    file: item.file,
+    title: item.file.name.replace(/\.[^/.]+$/, ""),
+    artist: "Artista Desconocido",
+    album: "Álbum Desconocido",
+    baseName: item.baseName,
+    coverUrl: imageMap.get(item.baseName) || defaultFolderCover || null
+  }));
+
+  await processNewTracks(newTracks);
+  toggleModal('settingsModal', false);
+  showToast(`${newTracks.length} canciones ${addMode ? "añadidas" : "cargadas"}`);
 }
 
 /* CARGA Y MANEJO DE ARCHIVOS */
@@ -2265,34 +2391,9 @@ document.getElementById("audioFiles").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files);
   if (!files.length) return;
 
-  clearPlaylistAndMemory();
-
-  searchQuery = "";
-  const searchInput = document.getElementById("searchInput");
-  if (searchInput) searchInput.value = "";
-
-  let audioFiles = [];
-  let imageMap = new Map();
-  let defaultFolderCover = null;
-
-  files.forEach(file => {
-    processSingleFile(file, audioFiles, imageMap, (cov) => defaultFolderCover = cov);
-  });
-
-  if (audioFiles.length > 0) {
-    let newTracks = audioFiles.map(item => ({
-      file: item.file,
-      title: item.file.name.replace(/\.[^/.]+$/, ""),
-      artist: "Artista Desconocido",
-      album: "Álbum Desconocido",
-      baseName: item.baseName,
-      coverUrl: imageMap.get(item.baseName) || defaultFolderCover || null
-    }));
-    await processNewTracks(newTracks);
-  }
-
-  toggleModal('settingsModal', false);
-  showToast(`${files.length} archivos procesados`);
+  // El input manual por defecto reemplaza (comportamiento original)
+  showLoading("Procesando archivos...");
+  await handleIncomingFiles(files, false);
   e.target.value = "";
 });
 
