@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Reproductor MP3 Pro</title>
+<title>Reproductor MP3 Pro (Improved)</title>
 
 <!-- Favicon SVG -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100%' height='100%' rx='22' fill='%23000000'/><text x='50%' y='54%' font-size='65' font-family='sans-serif' text-anchor='middle' dominant-baseline='middle' fill='%23ffffff'>♫</text></svg>" type="image/svg+xml">
@@ -620,8 +620,6 @@ input[type=file] { display: none; }
   flex: 1;
   overflow-y: auto;
   padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-btn) transparent;
   min-width: 0;
 }
 
@@ -633,6 +631,50 @@ input[type=file] { display: none; }
   flex: 1;
   padding: 4px 8px 16px 4px;
   align-content: start;
+}
+
+/* Scrollbar consistente en listas y modales */
+.playlist-container,
+.albums-grid,
+.queue-drawer .playlist-container,
+#sidebarQueueList,
+.modal-card {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-btn) transparent;
+}
+
+.playlist-container::-webkit-scrollbar,
+.albums-grid::-webkit-scrollbar,
+.queue-drawer .playlist-container::-webkit-scrollbar,
+#sidebarQueueList::-webkit-scrollbar,
+.modal-card::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.playlist-container::-webkit-scrollbar-track,
+.albums-grid::-webkit-scrollbar-track,
+.queue-drawer .playlist-container::-webkit-scrollbar-track,
+#sidebarQueueList::-webkit-scrollbar-track,
+.modal-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.playlist-container::-webkit-scrollbar-thumb,
+.albums-grid::-webkit-scrollbar-thumb,
+.queue-drawer .playlist-container::-webkit-scrollbar-thumb,
+#sidebarQueueList::-webkit-scrollbar-thumb,
+.modal-card::-webkit-scrollbar-thumb {
+  background: var(--border-btn);
+  border-radius: 3px;
+}
+
+.playlist-container::-webkit-scrollbar-thumb:hover,
+.albums-grid::-webkit-scrollbar-thumb:hover,
+.queue-drawer .playlist-container::-webkit-scrollbar-thumb:hover,
+#sidebarQueueList::-webkit-scrollbar-thumb:hover,
+.modal-card::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .album-card {
@@ -1441,13 +1483,31 @@ button:active { transform: translateY(0) scale(0.96); }
       <input type="file" id="folderInput" webkitdirectory directory multiple>
 
       <label for="audioFiles" class="file-btn">SELECCIONAR MP3</label>
-      <input type="file" id="audioFiles" accept="audio/*" multiple>
+      <input type="file" id="audioFiles" accept="audio/*,.json,application/json" multiple>
 
       <label for="lrcFile" class="file-btn">CARGAR .LRC</label>
       <input type="file" id="lrcFile" accept=".lrc">
 
       <label for="mvFiles" class="file-btn file-btn-full">CARGAR MV (.MP4 / .WEBM)</label>
       <input type="file" id="mvFiles" accept="video/*" multiple>
+    </div>
+
+    <div class="section-subtitle">Acelerar carga</div>
+    <a href="https://nuninano.github.io/Reproductor/library-cache-tool.html" target="_blank" rel="noopener"
+       class="file-btn file-btn-full" style="text-decoration:none; text-align:center; margin-bottom:8px; color:var(--accent-color);">
+      ⚡ Generar library-cache.json
+    </a>
+    <p style="font-size:11px; color:var(--text-muted); margin:0 0 12px; line-height:1.4;">
+      Genera un caché de metadatos. Colócalo en la carpeta de música o cárgalo junto a los archivos para carga casi instantánea.
+    </p>
+
+    <div class="section-subtitle">Metadatos</div>
+    <div class="setting-row">
+      <span>Carga ligera<br><small style="color:var(--text-muted);font-weight:400">Sin portadas ni títulos (solo artista/álbum)</small></span>
+      <label class="switch">
+        <input type="checkbox" id="lightMetaToggle" onchange="saveSettings()">
+        <span class="slider"></span>
+      </label>
     </div>
 
     <!-- Opciones de Reproducción y Salto -->
@@ -1507,6 +1567,13 @@ button:active { transform: translateY(0) scale(0.96); }
         <span class="slider"></span>
       </label>
     </div>
+
+    <!-- Restablecimiento de Aplicación -->
+    <div class="section-subtitle" style="color: #ef4444; border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 16px;">Zona de peligro</div>
+    <div class="setting-row">
+      <span>Restablecer todo<br><small style="color:var(--text-muted);font-weight:400">Elimina ajustes, cola y favoritos</small></span>
+      <button class="btn-danger" style="padding: 6px 12px; font-size: 11px;" onclick="clearAppData()">BORRAR DATOS</button>
+    </div>
   </div>
 </div>
 
@@ -1529,6 +1596,231 @@ let previousVolume = 1;
 let folderHandle = null;
 let isShuffle = false;
 let draggedQueueIndex = -1;
+
+// Integración con Tauri APIs
+var isTauri = !!(window.__TAURI__);
+let tauriStore = null;
+
+async function initTauriStore() {
+  if (!isTauri || !window.__TAURI__.store) return;
+  try {
+    tauriStore = await window.__TAURI__.store.load('nuninano-player.json', { autoSave: true });
+  } catch (e) {
+    console.warn('Store Tauri no disponible', e);
+    tauriStore = null;
+  }
+}
+
+function saveToTauri(key, value) {
+  if (!tauriStore) return;
+  tauriStore.set(key, value).catch(() => {});
+}
+
+async function loadFromTauri(key) {
+  if (!tauriStore) return null;
+  try {
+    return await tauriStore.get(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Obtener la carpeta de Música por defecto usando la API nativa de Tauri
+async function getDefaultMusicDir() {
+  if (!isTauri || !window.__TAURI__.path) return null;
+  try {
+    return await window.__TAURI__.path.audioDir();
+  } catch (e) {
+    console.warn("No se pudo obtener la carpeta de música por defecto", e);
+    return null;
+  }
+}
+
+/* Helpers Tauri FS (compatible con withGlobalTauri) */
+async function tauriReadDir(dirPath, recursive = true) {
+  if (!window.__TAURI__?.fs?.readDir) return [];
+  try {
+    return await window.__TAURI__.fs.readDir(dirPath, { recursive });
+  } catch (e) {
+    console.warn("tauriReadDir falló:", e);
+    return [];
+  }
+}
+
+async function tauriReadTextFile(filePath) {
+  if (!window.__TAURI__?.fs?.readTextFile) return null;
+  try {
+    return await window.__TAURI__.fs.readTextFile(filePath);
+  } catch (e) {
+    console.warn("tauriReadTextFile falló:", e);
+    return null;
+  }
+}
+
+async function tauriReadBinaryFile(filePath) {
+  const fn = window.__TAURI__?.fs?.readBinaryFile || window.__TAURI__?.fs?.readFile;
+  if (!fn) return null;
+  try {
+    return await fn(filePath);
+  } catch (e) {
+    console.warn("tauriReadBinaryFile falló:", e);
+    return null;
+  }
+}
+
+function flattenTauriEntries(entries, baseDir = "", result = []) {
+  if (!entries) return result;
+  const sep = (baseDir && baseDir.includes("\\")) ? "\\" : "/";
+
+  for (const entry of entries) {
+    const name = entry.name || "";
+    let fullPath = entry.path || "";
+
+    if (!fullPath || (!fullPath.includes("/") && !fullPath.includes("\\"))) {
+      fullPath = baseDir
+        ? (baseDir.replace(/[/\\]$/, "") + sep + name)
+        : name;
+    }
+
+    if (entry.children && entry.children.length) {
+      flattenTauriEntries(entry.children, fullPath, result);
+    } else if (name || fullPath) {
+      result.push({ ...entry, name, path: fullPath });
+    }
+  }
+  return result;
+}
+
+// Escanear carpeta nativa + sidecars (LRC, portadas, MV, library-cache.json)
+async function scanTauriNativeFolder(dirPath) {
+  if (!isTauri || !window.__TAURI__.core) return;
+
+  showLoading("Escaneando música nativa...");
+  clearPlaylistAndMemory();
+
+  try {
+    // 1. Scan ultrarrápido de audio desde Rust
+    const rawItems = await window.__TAURI__.core.invoke('scan_music_folder', { dirPath });
+
+    // 2. Escanear sidecars con FS
+    let imageMap = new Map();
+    let defaultFolderCover = null;
+    let cacheFilePath = null;
+    let sidecarCount = { lrc: 0, mv: 0, img: 0 };
+
+    const entries = await tauriReadDir(dirPath, true);
+    const flat = flattenTauriEntries(entries, dirPath);
+
+    for (const entry of flat) {
+      const fullPath = entry.path || "";
+      const fileName = (entry.name || fullPath.split(/[/\\]/).pop() || "");
+      const nameLower = fileName.toLowerCase();
+      const baseName = fileName.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+
+      if (!fullPath) continue;
+
+      if (nameLower === "library-cache.json") {
+        cacheFilePath = fullPath;
+      } else if (nameLower.endsWith(".lrc")) {
+        lrcMap.set(baseName, { type: "tauri-path", path: fullPath });
+        sidecarCount.lrc++;
+      } else if (/\.(mp4|webm|mkv|mov|avi)$/i.test(fileName)) {
+        mvMap.set(baseName, { type: "tauri-path", path: fullPath });
+        sidecarCount.mv++;
+      } else if (/\.(jpg|jpeg|png|webp|gif)$/i.test(fileName)) {
+        try {
+          const imgUrl = window.__TAURI__.core.convertFileSrc(fullPath);
+          imageMap.set(baseName, imgUrl);
+          if (['cover', 'folder', 'album', 'front'].includes(baseName)) {
+            defaultFolderCover = imgUrl;
+          }
+          sidecarCount.img++;
+        } catch (e) {}
+      }
+    }
+
+    // 3. Cargar library-cache.json si existe
+    let cacheMap = null;
+    if (cacheFilePath) {
+      const cacheText = await tauriReadTextFile(cacheFilePath);
+      if (cacheText) {
+        try {
+          const data = JSON.parse(cacheText);
+          if (data && Array.isArray(data.tracks)) {
+            cacheMap = new Map();
+            data.tracks.forEach(t => {
+              if (t.baseName) cacheMap.set(t.baseName, t);
+              if (t.file) {
+                const bn = t.file.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+                if (!cacheMap.has(bn)) cacheMap.set(bn, t);
+              }
+            });
+            showToast(`Caché detectado (${cacheMap.size} entradas)`);
+          }
+        } catch (e) {
+          console.warn("library-cache.json inválido:", e);
+        }
+      }
+    }
+
+    // 4. Construir tracks
+    const audioFiles = rawItems.map(item => {
+      const baseName = item.base_name;
+      const cached = cacheMap ? cacheMap.get(baseName) : null;
+
+      let title = item.title || baseName;
+      let artist = item.artist || "Artista Desconocido";
+      let album = item.album || "Álbum Desconocido";
+      let coverUrl = imageMap.get(baseName) || defaultFolderCover || null;
+      let embeddedLyrics = null;
+
+      if (cached) {
+        title = cached.title || title;
+        artist = cached.artist || artist;
+        album = cached.album || album;
+        if (cached.cover && typeof cached.cover === "string" && cached.cover.startsWith("data:")) {
+          coverUrl = cached.cover;
+        }
+        if (cached.lyrics) embeddedLyrics = cached.lyrics;
+      }
+
+      return {
+        file: null,
+        audioSrc: window.__TAURI__.core.convertFileSrc(item.native_path),
+        title,
+        artist,
+        album,
+        baseName,
+        coverUrl,
+        embeddedLyrics,
+        metaLoaded: true,
+        nativePath: item.native_path
+      };
+    });
+
+    if (audioFiles.length > 0) {
+      playlist = audioFiles;
+      sortPlaylist();
+      renderCurrentView();
+
+      const extra = [];
+      if (sidecarCount.lrc) extra.push(`${sidecarCount.lrc} LRC`);
+      if (sidecarCount.mv) extra.push(`${sidecarCount.mv} MV`);
+      if (sidecarCount.img) extra.push(`${sidecarCount.img} portadas`);
+      const extraMsg = extra.length ? ` · ${extra.join(', ')}` : '';
+
+      showToast(`${audioFiles.length} canciones cargadas${extraMsg}`);
+      restoreSavedQueue();
+    } else {
+      showToast("No se encontraron canciones en la carpeta");
+    }
+  } catch (e) {
+    console.error("Error escaneando desde Rust:", e);
+    showToast("Error al escanear directorio nativo");
+  } finally {
+    hideLoading();
+  }
+}
 
 // Control de Memoria y Blob URLs
 let createdBlobUrls = [];
@@ -1569,10 +1861,10 @@ function clearPlaylistAndMemory() {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
   }
-  if (currentMvUrl) {
+  if (currentMvUrl && currentMvUrl.startsWith("blob:")) {
     URL.revokeObjectURL(currentMvUrl);
-    currentMvUrl = null;
   }
+  currentMvUrl = null;
   createdBlobUrls.forEach(url => URL.revokeObjectURL(url));
   createdBlobUrls = [];
 
@@ -1583,6 +1875,40 @@ function clearPlaylistAndMemory() {
   currentTrackIndex = -1;
   lrcMap.clear();
   mvMap.clear();
+}
+
+/* FUNCION PARA BORRAR TODOS LOS DATOS DE LA APLICACION */
+async function clearAppData() {
+  if (!confirm("¿Estás seguro de que deseas borrar todos los datos guardados de la app?\nSe eliminarán tu configuración, tus favoritos, la cola de reproducción y el acceso a carpetas guardadas.")) {
+    return;
+  }
+
+  localStorage.clear();
+
+  if (tauriStore) {
+    try {
+      await tauriStore.clear();
+    } catch (e) {
+      console.warn("Error al borrar Tauri Store:", e);
+    }
+  }
+
+  try {
+    const dbReq = indexedDB.deleteDatabase("MP3PlayerDB");
+    dbReq.onerror = (e) => console.warn("Error al borrar IndexedDB:", e);
+  } catch (e) {
+    console.warn("Error borrando IndexedDB:", e);
+  }
+
+  favorites.clear();
+  clearPlaylistAndMemory();
+
+  showToast("Todos los datos han sido borrados");
+  toggleModal('settingsModal', false);
+
+  setTimeout(() => {
+    location.reload();
+  }, 600);
 }
 
 /* PERSISTENCIA Y CONFIGURACIÓN */
@@ -1642,6 +1968,7 @@ function saveSettings() {
   let pureBlackToggle = document.getElementById("pureBlackToggle");
   let autoScrollToggle = document.getElementById("autoScrollToggle");
   let visualizerToggle = document.getElementById("visualizerToggle");
+  let lightMetaToggle = document.getElementById("lightMetaToggle");
   let skipSecInput = document.getElementById("skipSecondsInput");
 
   skipSeconds = parseInt(skipSecInput.value, 10) || 10;
@@ -1651,6 +1978,7 @@ function saveSettings() {
     pureBlack: pureBlackToggle.checked,
     autoScroll: autoScrollToggle.checked,
     visualizer: visualizerToggle.checked,
+    lightMeta: lightMetaToggle ? lightMetaToggle.checked : false,
     volume: audio.volume,
     skipSeconds: skipSeconds,
     playbackRate: audio.playbackRate,
@@ -1658,6 +1986,7 @@ function saveSettings() {
   };
 
   localStorage.setItem("mp3_player_settings", JSON.stringify(settings));
+  saveToTauri("mp3_player_settings", settings);
   applySettingsUI(settings);
   updateSkipButtonsUI();
   updateVisualizerState();
@@ -1668,12 +1997,14 @@ function applySettingsUI(settings) {
   let pureBlackToggle = document.getElementById("pureBlackToggle");
   let autoScrollToggle = document.getElementById("autoScrollToggle");
   let visualizerToggle = document.getElementById("visualizerToggle");
+  let lightMetaToggle = document.getElementById("lightMetaToggle");
   let skipSecInput = document.getElementById("skipSecondsInput");
 
   if (settings.darkMode !== undefined) darkToggle.checked = settings.darkMode;
   if (settings.pureBlack !== undefined) pureBlackToggle.checked = settings.pureBlack;
   if (settings.autoScroll !== undefined) autoScrollToggle.checked = settings.autoScroll;
   if (settings.visualizer !== undefined) visualizerToggle.checked = settings.visualizer;
+  if (settings.lightMeta !== undefined && lightMetaToggle) lightMetaToggle.checked = settings.lightMeta;
   if (settings.skipSeconds !== undefined) {
     skipSeconds = settings.skipSeconds;
     skipSecInput.value = skipSeconds;
@@ -1699,10 +2030,14 @@ function applySettingsUI(settings) {
   updateSkipButtonsUI();
 }
 
-function loadSettings() {
+async function loadSettings() {
   try {
-    const data = localStorage.getItem("mp3_player_settings");
-    if (data) applySettingsUI(JSON.parse(data));
+    let data = await loadFromTauri("mp3_player_settings");
+    if (!data) {
+      const raw = localStorage.getItem("mp3_player_settings");
+      data = raw ? JSON.parse(raw) : null;
+    }
+    if (data) applySettingsUI(data);
   } catch (e) {}
 }
 
@@ -1775,46 +2110,59 @@ document.addEventListener("keydown", (e) => {
 
 /* VISUALIZADOR DE AUDIO Y WEB AUDIO API */
 function initAudioContext() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 64;
-  
-  sourceNode = audioCtx.createMediaElementSource(audio);
-  sourceNode.connect(analyser);
-  analyser.connect(audioCtx.destination);
+  // Solo se puede llamar UNA vez. createMediaElementSource no se puede repetir.
+  if (sourceNode) return;
 
-  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 64;
+
+    sourceNode = audioCtx.createMediaElementSource(audio);
+    sourceNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+  } catch (e) {
+    console.warn("initAudioContext falló (audio seguirá sin visualizador):", e);
+    sourceNode = null;
+  }
 }
 
 function drawVisualizer() {
-  if (!analyser || !fsCanvasBg) return;
+  if (!fsCanvasBg) return;
 
   const ctx = fsCanvasBg.getContext("2d");
   const width = fsCanvasBg.width = fsCanvasBg.offsetWidth;
   const height = fsCanvasBg.height = fsCanvasBg.offsetHeight;
 
-  analyser.getByteFrequencyData(dataArray);
-
   ctx.clearRect(0, 0, width, height);
 
-  const barWidth = (width / dataArray.length) * 2;
-  let x = 0;
+  // Si no hay analyser, no dibujar barras (pero no romper audio)
+  if (analyser && dataArray) {
+    analyser.getByteFrequencyData(dataArray);
 
-  for (let i = 0; i < dataArray.length; i++) {
-    const barHeight = (dataArray[i] / 255) * (height * 0.4);
+    const barWidth = (width / dataArray.length) * 2;
+    let x = 0;
 
-    ctx.fillStyle = `rgba(0, 255, 213, ${dataArray[i] / 255 + 0.1})`;
-    ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
-
-    x += barWidth;
+    for (let i = 0; i < dataArray.length; i++) {
+      const barHeight = (dataArray[i] / 255) * (height * 0.4);
+      ctx.fillStyle = `rgba(0, 255, 213, ${dataArray[i] / 255 + 0.1})`;
+      ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
+      x += barWidth;
+    }
   }
 
   visualizerAnimationId = requestAnimationFrame(drawVisualizer);
 }
 
 function startVisualizer() {
-  const enabled = document.getElementById("visualizerToggle") ? document.getElementById("visualizerToggle").checked : true;
+  const enabled = document.getElementById("visualizerToggle")
+    ? document.getElementById("visualizerToggle").checked
+    : true;
+
   if (!enabled) {
     stopVisualizer();
     if (fsCanvasBg) {
@@ -1824,10 +2172,13 @@ function startVisualizer() {
     return;
   }
 
-  initAudioContext();
-  if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
+  // NUNCA crear MediaElementSource aquí si el audio ya está sonando
+  // y todavía no estaba conectado: eso mutea en Tauri.
+  // Solo reanudamos el contexto si ya existía.
+  if (sourceNode && audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
   }
+
   if (!visualizerAnimationId) {
     drawVisualizer();
   }
@@ -1875,6 +2226,7 @@ async function scanFolderHandle(handle) {
   let audioFiles = [];
   let imageMap = new Map();
   let defaultFolderCover = null;
+  let cacheFile = null;
 
   async function readEntries(dirHandle) {
     for await (const entry of dirHandle.values()) {
@@ -1883,7 +2235,9 @@ async function scanFolderHandle(handle) {
         const nameLower = file.name.toLowerCase();
         const baseName = file.name.replace(/\.[^/.]+$/, "").toLowerCase().trim();
 
-        if (nameLower.endsWith(".lrc")) {
+        if (nameLower === "library-cache.json") {
+          cacheFile = file;
+        } else if (nameLower.endsWith(".lrc")) {
           lrcMap.set(baseName, file);
         } else if (/\.(mp4|webm|mkv|mov|avi)$/i.test(file.name)) {
           mvMap.set(baseName, file);
@@ -1894,7 +2248,7 @@ async function scanFolderHandle(handle) {
           if (['cover', 'folder', 'album', 'front'].includes(baseName)) {
             defaultFolderCover = imgUrl;
           }
-        } else if (file.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a)$/i.test(file.name)) {
+        } else if (file.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i.test(file.name)) {
           audioFiles.push({ file, baseName });
         }
       } else if (entry.kind === 'directory') {
@@ -1905,23 +2259,32 @@ async function scanFolderHandle(handle) {
 
   await readEntries(handle);
 
+  let cacheMap = null;
+  if (cacheFile) {
+    cacheMap = await parseLibraryCache(cacheFile);
+    if (cacheMap) showToast(`Caché detectado (${cacheMap.size} entradas)`);
+  }
+
   let newTracks = audioFiles.map(item => ({
     file: item.file,
+    audioSrc: null,
     title: item.file.name.replace(/\.[^/.]+$/, ""),
     artist: "Artista Desconocido",
     album: "Álbum Desconocido",
     baseName: item.baseName,
-    coverUrl: imageMap.get(item.baseName) || defaultFolderCover || null
+    coverUrl: imageMap.get(item.baseName) || defaultFolderCover || null,
+    metaLoaded: false
   }));
 
   if (newTracks.length > 0) {
-    await processNewTracks(newTracks);
+    await processNewTracks(newTracks, cacheMap);
     restoreSavedQueue();
+  } else {
+    hideLoading();
+    showToast("No se encontraron canciones");
   }
 
-  hideLoading();
   toggleModal('settingsModal', false);
-  showToast(`${newTracks.length} canciones cargadas`);
 }
 
 function restoreSavedQueue() {
@@ -2392,54 +2755,139 @@ function goToCurrentArtist() {
   renderArtists();
 }
 
-/* PROCESAMIENTO OPTIMIZADO POR BLOQUES (BATCHING + MEMORY SAFE) */
-async function processNewTracks(newTracks) {
-  const total = newTracks.length;
-  showLoading(`Cargando metadatos de ${total} canciones...`);
+/* CARGA RÁPIDA + CACHÉ + ENRIQUECIMIENTO EN BACKGROUND */
+let enrichmentRunning = false;
+let enrichmentQueue = [];
 
-  const chunkSize = 20;
-  for (let i = 0; i < total; i += chunkSize) {
-    const chunk = newTracks.slice(i, i + chunkSize);
-    showLoading(`Procesando metadatos (${Math.min(i + chunkSize, total)}/${total})...`);
+function isLightMetaEnabled() {
+  const toggle = document.getElementById("lightMetaToggle");
+  return toggle ? toggle.checked : false;
+}
 
-    await Promise.all(chunk.map((track) => {
-      return new Promise((resolve) => {
-        if (!window.jsmediatags) return resolve(track);
-        window.jsmediatags.read(track.file, {
-          onSuccess: (tag) => {
-            const tags = tag.tags;
-            if (tags.title) track.title = tags.title;
-            if (tags.artist) track.artist = tags.artist;
-            if (tags.album) track.album = tags.album;
-
-            if (tags.picture && !track.coverUrl) {
-              try {
-                const { data, format } = tags.picture;
-                const byteArray = new Uint8Array(data);
-                const blob = new Blob([byteArray], { type: format });
-                const blobUrl = URL.createObjectURL(blob);
-                track.coverUrl = blobUrl;
-                createdBlobUrls.push(blobUrl);
-              } catch (e) { console.error(e); }
-            }
-
-            if (tags.USLT) {
-              track.embeddedLyrics = typeof tags.USLT === "object" ? tags.USLT.data?.lyrics : tags.USLT;
-            }
-            resolve(track);
-          },
-          onError: () => resolve(track)
-        });
-      });
-    }));
-
-    await new Promise(r => setTimeout(r, 0));
+async function parseLibraryCache(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || !Array.isArray(data.tracks)) return null;
+    const map = new Map();
+    data.tracks.forEach(t => {
+      if (t.baseName) map.set(t.baseName, t);
+      if (t.file) {
+        const bn = t.file.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+        if (!map.has(bn)) map.set(bn, t);
+      }
+    });
+    return map;
+  } catch (e) {
+    console.warn("library-cache.json inválido:", e);
+    return null;
   }
+}
+
+async function processNewTracks(newTracks, cacheMap = null) {
+  const needsEnrichment = [];
+  newTracks.forEach(track => {
+    const cached = cacheMap ? cacheMap.get(track.baseName) : null;
+    if (cached) {
+      track.title = cached.title || track.title;
+      track.artist = cached.artist || track.artist;
+      track.album = cached.album || track.album;
+      if (cached.cover && typeof cached.cover === "string" && cached.cover.startsWith("data:")) {
+        track.coverUrl = cached.cover;
+      }
+      if (cached.lyrics) track.embeddedLyrics = cached.lyrics;
+      track.metaLoaded = true;
+    } else {
+      track.metaLoaded = false;
+      if (track.file) needsEnrichment.push(track);
+    }
+  });
 
   playlist.push(...newTracks);
   sortPlaylist();
   hideLoading();
   renderCurrentView();
+
+  const cachedCount = newTracks.length - needsEnrichment.length;
+  if (cachedCount > 0 && needsEnrichment.length === 0) {
+    showToast(`${newTracks.length} canciones desde caché`);
+  } else if (cachedCount > 0) {
+    showToast(`${cachedCount} desde caché · ${needsEnrichment.length} por analizar…`);
+    enrichTracksInBackground(needsEnrichment);
+  } else {
+    showToast(`${newTracks.length} canciones cargadas (cargando detalles…)`);
+    enrichTracksInBackground(needsEnrichment);
+  }
+}
+
+async function enrichTracksInBackground(tracks) {
+  enrichmentQueue.push(...tracks.filter(t => !t.metaLoaded));
+  if (enrichmentRunning) return;
+  enrichmentRunning = true;
+
+  let processed = 0;
+  const chunkSize = 12;
+
+  try {
+    while (enrichmentQueue.length > 0) {
+      const chunk = enrichmentQueue.splice(0, chunkSize);
+      await Promise.all(chunk.map(t => enrichSingleTrack(t)));
+      processed += chunk.length;
+      if (processed % 36 === 0 || enrichmentQueue.length === 0) {
+        renderCurrentView();
+      }
+      await new Promise(r => setTimeout(r, 8));
+    }
+  } catch (e) {
+    console.error("Error enriqueciendo metadatos:", e);
+  } finally {
+    enrichmentRunning = false;
+    renderCurrentView();
+    if (processed > 0) showToast(`Detalles cargados (${processed})`);
+  }
+}
+
+function enrichSingleTrack(track) {
+  return new Promise((resolve) => {
+    if (!window.jsmediatags || track.metaLoaded || !track.file) {
+      track.metaLoaded = true;
+      return resolve();
+    }
+    const lightMode = isLightMetaEnabled();
+    try {
+      window.jsmediatags.read(track.file, {
+        onSuccess: (tag) => {
+          try {
+            const tags = tag.tags;
+            if (!lightMode && tags.title) track.title = String(tags.title);
+            if (tags.artist) track.artist = String(tags.artist);
+            if (tags.album) track.album = String(tags.album);
+
+            if (!lightMode && tags.picture && !track.coverUrl) {
+              const { data, format } = tags.picture;
+              const byteArray = new Uint8Array(data);
+              const blob = new Blob([byteArray], { type: format || 'image/jpeg' });
+              const blobUrl = URL.createObjectURL(blob);
+              track.coverUrl = blobUrl;
+              createdBlobUrls.push(blobUrl);
+            }
+
+            if (tags.USLT) {
+              track.embeddedLyrics = typeof tags.USLT === "object"
+                ? (tags.USLT.data?.lyrics || tags.USLT.lyrics)
+                : String(tags.USLT);
+            }
+          } catch (e) {}
+          track.metaLoaded = true;
+          resolve();
+        },
+        onError: () => { track.metaLoaded = true; resolve(); }
+      });
+    } catch (e) {
+      track.metaLoaded = true;
+      resolve();
+    }
+  });
 }
 
 /* EVENTOS DE CARGA DE ARCHIVOS MP3, LRC Y MV */
@@ -2448,17 +2896,19 @@ document.getElementById("folderInput").addEventListener("change", async (e) => {
   if (!files.length) return;
 
   clearPlaylistAndMemory();
+  showLoading("Procesando archivos...");
 
-  let audioCount = 0;
   let imageMap = new Map();
   let defaultFolderCover = null;
   let newTracks = [];
+  let cacheFile = null;
 
   files.forEach(file => {
     const nameLower = file.name.toLowerCase();
     const baseName = file.name.replace(/\.[^/.]+$/, "").toLowerCase().trim();
 
-    if (nameLower.endsWith(".lrc")) lrcMap.set(baseName, file);
+    if (nameLower === "library-cache.json") cacheFile = file;
+    else if (nameLower.endsWith(".lrc")) lrcMap.set(baseName, file);
     else if (/\.(mp4|webm|mkv|mov|avi)$/i.test(file.name)) mvMap.set(baseName, file);
     else if (/\.(jpg|jpeg|png|webp|gif)$/i.test(file.name)) {
       const imgUrl = URL.createObjectURL(file);
@@ -2469,27 +2919,33 @@ document.getElementById("folderInput").addEventListener("change", async (e) => {
   });
 
   files.forEach(file => {
-    if (file.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a)$/i.test(file.name)) {
+    if (file.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i.test(file.name)) {
       const baseName = file.name.replace(/\.[^/.]+$/, "").toLowerCase().trim();
       newTracks.push({
         file: file,
+        audioSrc: null,
         title: file.name.replace(/\.[^/.]+$/, ""),
         artist: "Artista Desconocido",
         album: "Álbum Desconocido",
         baseName: baseName,
-        coverUrl: imageMap.get(baseName) || defaultFolderCover || null
+        coverUrl: imageMap.get(baseName) || defaultFolderCover || null,
+        metaLoaded: false
       });
-      audioCount++;
     }
   });
 
+  let cacheMap = cacheFile ? await parseLibraryCache(cacheFile) : null;
+  if (cacheMap) showToast(`Caché detectado (${cacheMap.size} entradas)`);
+
   if (newTracks.length > 0) {
-    await processNewTracks(newTracks);
+    await processNewTracks(newTracks, cacheMap);
     if (currentTrackIndex === -1 && playlist.length > 0) playContext(0, playlist.map((_, i) => i));
+  } else {
+    hideLoading();
+    showToast("No se encontraron canciones");
   }
 
   toggleModal('settingsModal', false);
-  showToast(`${audioCount} canciones cargadas`);
   e.target.value = "";
 });
 
@@ -2497,22 +2953,40 @@ document.getElementById("audioFiles").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files);
   if (!files.length) return;
 
-  let newTracks = files.map(file => ({
+  showLoading("Procesando archivos...");
+
+  let cacheFile = null;
+  const audioOnly = [];
+  files.forEach(f => {
+    const name = f.name.toLowerCase();
+    if (name === "library-cache.json") cacheFile = f;
+    else if (f.type.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i.test(f.name)) {
+      audioOnly.push(f);
+    }
+  });
+
+  let cacheMap = cacheFile ? await parseLibraryCache(cacheFile) : null;
+
+  let newTracks = audioOnly.map(file => ({
     file: file,
+    audioSrc: null,
     title: file.name.replace(/\.[^/.]+$/, ""),
     artist: "Artista Desconocido",
     album: "Álbum Desconocido",
     baseName: file.name.replace(/\.[^/.]+$/, "").toLowerCase().trim(),
-    coverUrl: null
+    coverUrl: null,
+    metaLoaded: false
   }));
 
   if (newTracks.length > 0) {
-    await processNewTracks(newTracks);
+    await processNewTracks(newTracks, cacheMap);
     if (currentTrackIndex === -1 && playlist.length > 0) playContext(0, playlist.map((_, i) => i));
+  } else {
+    hideLoading();
+    showToast(cacheFile ? "Solo se cargó el caché (sin audio)" : "No se encontraron canciones");
   }
 
   toggleModal('settingsModal', false);
-  showToast(`${files.length} canciones añadidas`);
   e.target.value = "";
 });
 
@@ -2548,25 +3022,35 @@ function updateMVFullscreen() {
   if (!fsOverlay.classList.contains("open") || currentTrackIndex < 0) {
     fsVideoBg.style.display = "none";
     fsVideoBg.pause();
-    if (currentMvUrl) {
+    if (currentMvUrl && currentMvUrl.startsWith("blob:")) {
       URL.revokeObjectURL(currentMvUrl);
-      currentMvUrl = null;
-      fsVideoBg.removeAttribute("src");
-      delete fsVideoBg.dataset.trackKey;
     }
+    currentMvUrl = null;
+    fsVideoBg.removeAttribute("src");
+    delete fsVideoBg.dataset.trackKey;
     return;
   }
 
   const track = playlist[currentTrackIndex];
-  const mvFile = track ? mvMap.get(track.baseName) : null;
+  const mvEntry = track ? mvMap.get(track.baseName) : null;
 
-  if (mvFile) {
+  if (mvEntry) {
     if (fsVideoBg.dataset.trackKey !== track.baseName) {
-      if (currentMvUrl) {
+      if (currentMvUrl && currentMvUrl.startsWith("blob:")) {
         URL.revokeObjectURL(currentMvUrl);
       }
-      currentMvUrl = URL.createObjectURL(mvFile);
-      fsVideoBg.src = currentMvUrl;
+      currentMvUrl = null;
+
+      if (mvEntry instanceof File || mvEntry instanceof Blob) {
+        currentMvUrl = URL.createObjectURL(mvEntry);
+        fsVideoBg.src = currentMvUrl;
+      } else if (mvEntry.type === "tauri-path" && mvEntry.path) {
+        fsVideoBg.src = window.__TAURI__.core.convertFileSrc(mvEntry.path);
+      } else if (typeof mvEntry === "string") {
+        fsVideoBg.src = isTauri
+          ? window.__TAURI__.core.convertFileSrc(mvEntry)
+          : mvEntry;
+      }
       fsVideoBg.dataset.trackKey = track.baseName;
     }
     fsVideoBg.style.display = "block";
@@ -2580,10 +3064,10 @@ function updateMVFullscreen() {
   } else {
     fsVideoBg.style.display = "none";
     fsVideoBg.pause();
-    if (currentMvUrl) {
+    if (currentMvUrl && currentMvUrl.startsWith("blob:")) {
       URL.revokeObjectURL(currentMvUrl);
-      currentMvUrl = null;
     }
+    currentMvUrl = null;
     fsVideoBg.removeAttribute("src");
     delete fsVideoBg.dataset.trackKey;
     fsLyricsBox.classList.remove("lyrics-hidden");
@@ -2849,8 +3333,13 @@ async function loadTrack(index, autoPlay = true) {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
   }
-  currentAudioUrl = URL.createObjectURL(track.file);
-  audio.src = currentAudioUrl;
+
+  if (track.audioSrc) {
+    audio.src = track.audioSrc;
+  } else if (track.file) {
+    currentAudioUrl = URL.createObjectURL(track.file);
+    audio.src = currentAudioUrl;
+  }
 
   updateTrackMetadataUI(track.title, track.artist);
   updateMediaSessionMetaData(track);
@@ -2866,19 +3355,30 @@ async function loadTrack(index, autoPlay = true) {
   renderQueue();
   saveQueueState();
 
-  const matchedLrcFile = lrcMap.get(track.baseName);
-  if (matchedLrcFile) {
-    const reader = new FileReader();
-    reader.onload = () => parseLRC(reader.result);
-    reader.readAsText(matchedLrcFile);
+  const matchedLrc = lrcMap.get(track.baseName);
+  if (matchedLrc) {
+    if (matchedLrc instanceof File || matchedLrc instanceof Blob) {
+      const reader = new FileReader();
+      reader.onload = () => parseLRC(reader.result);
+      reader.readAsText(matchedLrc);
+    } else if (matchedLrc.type === "tauri-path" && matchedLrc.path) {
+      tauriReadTextFile(matchedLrc.path).then(text => {
+        if (text) parseLRC(text);
+      });
+    } else if (typeof matchedLrc === "string") {
+      if (matchedLrc.includes("\n") || matchedLrc.startsWith("[")) {
+        parseLRC(matchedLrc);
+      } else {
+        tauriReadTextFile(matchedLrc).then(text => {
+          if (text) parseLRC(text);
+        });
+      }
+    }
   } else if (track.embeddedLyrics) {
     parseLRC(track.embeddedLyrics);
   }
 
-  initAudioContext();
-  if (audioCtx && audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-  }
+  // NO llamar initAudioContext aquí — mutea el audio en Tauri
 
   if (autoPlay) {
     try {
@@ -2920,16 +3420,26 @@ function updatePlayStateUI(isPlaying) {
 
 async function togglePlay() {
   if (!audio.src) return;
-  initAudioContext();
-  if (audioCtx && audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-  }
+
   if (audio.paused) {
     try {
+      // 1) Reproducir primero
       await audio.play();
       updatePlayStateUI(true);
+
+      // 2) Conectar visualizador DESPUÉS (solo una vez, con gesto de usuario)
+      if (!sourceNode) {
+        initAudioContext();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+      if (document.getElementById("fullscreenOverlay")?.classList.contains("open")) {
+        startVisualizer();
+      }
     } catch (e) {
-      console.error("Error al reanudar audio:", e);
+      console.error("Error al reproducir audio:", e);
+      updatePlayStateUI(false);
     }
   } else {
     audio.pause();
@@ -3110,9 +3620,22 @@ function escapeHtml(str) {
 
 /* INICIALIZACIÓN AUTOMÁTICA */
 window.addEventListener("DOMContentLoaded", async () => {
-  loadSettings();
+  await initTauriStore();
+  await loadSettings();
   setupMediaSession();
 
+  // SI ESTAMOS EN TAURI (.exe)
+  if (isTauri) {
+    let customPath = await loadFromTauri("custom_music_folder");
+    let targetFolder = customPath || await getDefaultMusicDir();
+
+    if (targetFolder) {
+      await scanTauriNativeFolder(targetFolder);
+      return;
+    }
+  }
+
+  // SI ESTAMOS EN NAVEGADOR WEB
   folderHandle = await getSavedFolderHandle();
   if (folderHandle) {
     try {
