@@ -2110,8 +2110,8 @@ document.addEventListener("keydown", (e) => {
 
 /* VISUALIZADOR DE AUDIO Y WEB AUDIO API */
 function initAudioContext() {
-  // Solo se puede llamar UNA vez. createMediaElementSource no se puede repetir.
-  if (sourceNode) return;
+  // Solo una vez
+  if (sourceNode || analyser) return;
 
   try {
     if (!audioCtx) {
@@ -2119,12 +2119,28 @@ function initAudioContext() {
     }
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 64;
-
-    sourceNode = audioCtx.createMediaElementSource(audio);
-    sourceNode.connect(analyser);
-    analyser.connect(audioCtx.destination);
-
     dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    // IMPORTANTE: no usar createMediaElementSource en Tauri.
+    // Eso secuestra la salida de audio y se mutea con seeks en pausa / fullscreen.
+    // captureStream() solo "escucha" el audio sin interceptarlo.
+    const canCapture = typeof audio.captureStream === "function";
+
+    if (canCapture) {
+      const stream = audio.captureStream();
+      sourceNode = audioCtx.createMediaStreamSource(stream);
+      sourceNode.connect(analyser);
+      // NO conectar a destination → el <audio> sigue sonando por su ruta nativa
+    } else if (!isTauri) {
+      // Fallback solo en navegador web normal
+      sourceNode = audioCtx.createMediaElementSource(audio);
+      sourceNode.connect(analyser);
+      analyser.connect(audioCtx.destination);
+    } else {
+      // Tauri sin captureStream: visualizador desactivado, audio intacto
+      console.warn("Visualizer desactivado en Tauri (sin captureStream)");
+      sourceNode = null;
+    }
   } catch (e) {
     console.warn("initAudioContext falló (audio seguirá sin visualizador):", e);
     sourceNode = null;
